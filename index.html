@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set1080p — 開機把投影設定橋好</title>
+<meta name="description" content="Windows 顯示設定小工具：開機自動把投影模式切同步、解析度設 1920×1080、DPI 設 125%。成功時完全靜默，失敗才跳窗並留下記錄檔。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#060E1E;
+  --deep:#0A1730;
+  --panel:#0E2142;
+  --line:#1C3866;
+  --line-soft:#15274A;
+  --text:#E6EDF9;
+  --dim:#8FA6C8;
+  --dimmer:#5D739A;
+  --cyan:#3FD0E0;
+  --amber:#F5B843;
+  --disp:"Chakra Petch",system-ui,sans-serif;
+  --mono:"IBM Plex Mono","Noto Sans TC",monospace;
+  --body:"Noto Sans TC",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--void);
+  color:var(--text);
+  font-family:var(--body);
+  font-size:16px;
+  line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+/* faint calibration crosshatch over the whole page */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    repeating-linear-gradient(0deg,rgba(28,56,102,.30) 0 1px,transparent 1px 64px),
+    repeating-linear-gradient(90deg,rgba(28,56,102,.30) 0 1px,transparent 1px 64px);
+  mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 0%,transparent 75%);
+  -webkit-mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 0%,transparent 75%);
+}
+.wrap{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:0 24px}
+
+a{color:inherit}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:2px}
+
+/* ---------- OSD status bar ---------- */
+.osd{
+  position:sticky;top:0;z-index:50;
+  background:rgba(6,14,30,.88);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+}
+.osd-in{
+  max-width:1080px;margin:0 auto;padding:10px 24px;
+  display:flex;align-items:center;gap:16px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.10em;
+}
+.osd-mark{font-family:var(--disp);font-weight:700;font-size:14px;letter-spacing:.06em}
+.osd-mark span{color:var(--cyan)}
+.osd-sep{flex:1;height:1px;background:var(--line)}
+.osd-read{color:var(--dimmer);white-space:nowrap}
+@media(max-width:620px){.osd-read.hide-sm{display:none}}
+
+/* ---------- hero ---------- */
+.hero{padding:76px 0 96px}
+.eyebrow{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.22em;
+  color:var(--dimmer);text-transform:uppercase;margin-bottom:26px;
+}
+/* the display frame — the signature element */
+.screen{
+  position:relative;
+  border:1px solid var(--line);
+  background:
+    repeating-linear-gradient(0deg,rgba(28,56,102,.22) 0 1px,transparent 1px 40px),
+    repeating-linear-gradient(90deg,rgba(28,56,102,.22) 0 1px,transparent 1px 40px),
+    linear-gradient(165deg,#0C1B39 0%,#08142C 60%,#070F22 100%);
+  background-color:#0A1730;
+  aspect-ratio:5/4;
+  display:flex;align-items:center;justify-content:center;
+  padding:clamp(24px,5vw,64px);
+  transition:aspect-ratio .55s cubic-bezier(.6,0,.2,1);
+  overflow:hidden;
+}
+.screen.wide{aspect-ratio:16/9}
+/* on narrow screens the 16:9 box is too short for the copy — floor it */
+@media(max-width:700px){
+  .screen{aspect-ratio:auto;height:320px;padding:22px 20px;
+          transition:height .55s cubic-bezier(.6,0,.2,1)}
+  .screen.wide{aspect-ratio:auto;height:262px}
+}
+/* registration marks */
+.reg{position:absolute;width:22px;height:22px;border:1px solid var(--line);pointer-events:none}
+.reg.tl{top:10px;left:10px;border-right:0;border-bottom:0}
+.reg.tr{top:10px;right:10px;border-left:0;border-bottom:0}
+.reg.bl{bottom:10px;left:10px;border-right:0;border-top:0}
+.reg.br{bottom:10px;right:10px;border-left:0;border-top:0}
+/* black flash on resolution change */
+.blink{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none}
+.blink.on{opacity:1}
+/* on-screen readout inside the frame */
+.readout{
+  position:absolute;top:16px;left:18px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;
+  color:var(--dimmer);display:flex;align-items:center;gap:9px;
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--amber);transition:background .3s}
+.dot.ok{background:var(--cyan);box-shadow:0 0 10px rgba(63,208,224,.85)}
+.stamp{
+  position:absolute;bottom:16px;right:18px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;
+  color:var(--cyan);opacity:0;transition:opacity .4s;
+}
+.stamp.on{opacity:1}
+/* hero copy scales when "DPI applies" */
+.hero-copy{
+  text-align:center;transform:scale(.84);transform-origin:center;
+  transition:transform .5s cubic-bezier(.6,0,.2,1);
+}
+.hero-copy.dpi{transform:scale(1)}
+h1{
+  font-family:var(--disp);font-weight:700;
+  font-size:clamp(27px,5vw,50px);line-height:1.24;letter-spacing:.01em;
+}
+h1 em{font-style:normal;color:var(--cyan)}
+.sub{color:var(--dim);font-size:clamp(14px,1.6vw,16.5px);margin-top:18px;max-width:46ch;margin-inline:auto}
+
+.actions{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:30px}
+.btn{
+  font-family:var(--mono);font-size:13px;letter-spacing:.08em;font-weight:500;
+  padding:12px 24px;border:1px solid var(--cyan);color:var(--cyan);
+  text-decoration:none;background:transparent;cursor:pointer;
+  transition:background .18s,color .18s;
+}
+.btn:hover{background:var(--cyan);color:var(--void)}
+.btn.ghost{border-color:var(--line);color:var(--dim)}
+.btn.ghost:hover{background:var(--line);color:var(--text)}
+.replay{
+  display:block;margin:18px auto 0;background:none;border:0;cursor:pointer;
+  font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--dimmer);
+}
+.replay:hover{color:var(--cyan)}
+
+/* ---------- section scaffold ---------- */
+section{padding:78px 0;border-top:1px solid var(--line-soft)}
+.stag{
+  font-family:var(--mono);font-size:11px;letter-spacing:.22em;
+  color:var(--dimmer);text-transform:uppercase;margin-bottom:12px;
+}
+h2{font-family:var(--disp);font-weight:600;font-size:clamp(21px,3vw,29px);line-height:1.35}
+.lede{color:var(--dim);margin-top:14px;max-width:60ch;font-size:15.5px}
+
+/* ---------- signal chain ---------- */
+.chain{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:36px;background:var(--line-soft)}
+@media(max-width:760px){.chain{grid-template-columns:1fr}}
+.node{background:var(--deep);padding:26px 22px 24px;position:relative}
+.node-k{font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;color:var(--dimmer)}
+.node-v{font-family:var(--disp);font-weight:600;font-size:20px;margin-top:9px;color:var(--text)}
+.node-v small{font-family:var(--mono);font-size:12px;color:var(--dim);font-weight:400;letter-spacing:.04em}
+.node-d{color:var(--dim);font-size:13.5px;margin-top:12px;line-height:1.7}
+.node-api{
+  font-family:var(--mono);font-size:11px;color:var(--dimmer);
+  margin-top:16px;padding-top:12px;border-top:1px dashed var(--line);
+  word-break:break-all;
+}
+.node.soft .node-v{color:var(--dim)}
+.flag{
+  display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+  padding:2px 7px;border:1px solid var(--line);color:var(--dimmer);margin-top:12px;
+}
+/* DPI ladder — real data from the tool */
+.ladder{display:flex;gap:3px;align-items:flex-end;margin-top:16px;height:34px}
+.rung{flex:1;background:var(--line);height:9px;position:relative}
+.rung.on{background:var(--cyan);height:26px}
+.rung.on::after{
+  content:"125";position:absolute;top:-15px;left:50%;transform:translateX(-50%);
+  font-family:var(--mono);font-size:9.5px;color:var(--cyan);letter-spacing:.04em;
+}
+
+/* ---------- retry flow ---------- */
+.flow{margin-top:38px;display:flex;flex-direction:column;gap:0}
+.step{display:grid;grid-template-columns:74px 1fr;gap:20px;align-items:start}
+@media(max-width:620px){.step{grid-template-columns:52px 1fr;gap:14px}}
+.step-n{
+  font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--dimmer);
+  padding-top:19px;text-align:right;
+}
+.step-b{border-left:1px solid var(--line);padding:16px 0 16px 24px;position:relative}
+@media(max-width:620px){.step-b{padding-left:16px}}
+.step-b::before{
+  content:"";position:absolute;left:-4.5px;top:23px;
+  width:8px;height:8px;background:var(--void);border:1px solid var(--line);
+}
+.step.hit .step-b::before{background:var(--cyan);border-color:var(--cyan)}
+.step.warn .step-b::before{background:var(--amber);border-color:var(--amber)}
+.step-t{font-family:var(--disp);font-weight:600;font-size:16.5px}
+.step-d{color:var(--dim);font-size:14px;margin-top:6px;max-width:62ch}
+.step-d code{font-family:var(--mono);font-size:12.5px;color:var(--cyan);background:rgba(63,208,224,.09);padding:1px 6px}
+
+/* ---------- the loud section ---------- */
+.loud{border-top:1px solid var(--amber)}
+.loud .stag{color:var(--amber)}
+.loud h2 em{font-style:normal;color:var(--amber)}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:36px}
+.pair>div,.cols>div,.chain>div{min-width:0} /* grid items default to min-width:auto */
+@media(max-width:860px){.pair{grid-template-columns:1fr}}
+.cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;color:var(--dimmer);margin-bottom:11px}
+/* windows-ish message box */
+.msgbox{border:1px solid var(--line);background:var(--panel)}
+.msgbox-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 12px;border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:11.5px;color:var(--dim);
+}
+.msgbox-x{color:var(--dimmer)}
+.msgbox-body{padding:22px 20px;display:flex;gap:15px}
+.msgbox-body>div{min-width:0} /* let the flex child shrink below its content width */
+@media(max-width:400px){
+  .wrap,.osd-in{padding-left:16px;padding-right:16px}
+  .msgbox-body{padding:18px 15px;gap:12px}
+}
+.icon-err{
+  flex:0 0 26px;width:26px;height:26px;border-radius:50%;
+  border:1.5px solid var(--amber);color:var(--amber);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--disp);font-weight:700;font-size:15px;margin-top:2px;
+}
+.msg-h{font-family:var(--disp);font-weight:600;font-size:15.5px;color:var(--amber)}
+.msg-l{font-size:13.5px;color:var(--text);margin-top:12px}
+.msg-n{font-size:12.5px;color:var(--dim);margin-top:12px;line-height:1.65}
+.msg-p{font-family:var(--mono);font-size:11.5px;color:var(--cyan);margin-top:12px;word-break:break-all}
+.msgbox-foot{padding:0 20px 18px;text-align:right}
+.okbtn{
+  font-family:var(--mono);font-size:11.5px;padding:5px 22px;
+  border:1px solid var(--line);color:var(--dim);background:transparent;
+}
+/* log */
+.logbox{border:1px solid var(--line);background:#050C1A;overflow:hidden}
+.logbox-bar{
+  padding:8px 12px;border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:11.5px;color:var(--dimmer);
+}
+pre{
+  font-family:var(--mono);font-size:11.5px;line-height:1.85;
+  padding:18px 16px;overflow-x:auto;color:var(--dim);
+}
+pre b{color:var(--text);font-weight:500}
+pre .ok{color:var(--cyan)}
+pre .no{color:var(--amber)}
+pre .rule{color:var(--line)}
+
+/* ---------- tables ---------- */
+.tbl{width:100%;border-collapse:collapse;margin-top:30px;font-size:14px}
+.tbl th{
+  text-align:left;font-family:var(--mono);font-weight:500;
+  font-size:10.5px;letter-spacing:.16em;color:var(--dimmer);
+  text-transform:uppercase;padding:0 16px 11px 0;border-bottom:1px solid var(--line);
+}
+.tbl td{padding:14px 16px 14px 0;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--dim)}
+.tbl td:first-child{color:var(--text);white-space:nowrap}
+.tbl code{font-family:var(--mono);font-size:12.5px;color:var(--cyan)}
+@media(max-width:620px){.tbl,.tbl tbody,.tbl tr,.tbl td{display:block;width:100%}
+  .tbl thead{display:none}
+  .tbl tr{border-bottom:1px solid var(--line);padding:14px 0}
+  .tbl td{border:0;padding:2px 0}
+  .tbl td:first-child{font-family:var(--disp);font-weight:600;margin-bottom:5px;white-space:normal}
+}
+
+/* ---------- deploy ---------- */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:44px;margin-top:36px}
+@media(max-width:820px){.cols{grid-template-columns:1fr;gap:34px}}
+.h3{font-family:var(--disp);font-weight:600;font-size:16.5px;margin-bottom:14px}
+.list{list-style:none;counter-reset:s}
+.list li{
+  counter-increment:s;position:relative;padding-left:30px;
+  color:var(--dim);font-size:14px;margin-bottom:12px;line-height:1.7;
+}
+.list li::before{
+  content:counter(s,decimal-leading-zero);position:absolute;left:0;top:1px;
+  font-family:var(--mono);font-size:10.5px;color:var(--dimmer);letter-spacing:.06em;
+}
+.list b{color:var(--text);font-weight:500}
+.tip{
+  border-left:2px solid var(--cyan);padding:14px 0 14px 18px;margin-top:22px;
+  font-size:13.5px;color:var(--dim);background:rgba(63,208,224,.05);padding-right:16px;
+}
+.tip b{color:var(--cyan);font-weight:500}
+.cmd{
+  font-family:var(--mono);font-size:12.5px;background:#050C1A;
+  border:1px solid var(--line);padding:14px 16px;overflow-x:auto;
+  color:var(--text);margin-top:12px;
+}
+.cmd i{color:var(--dimmer);font-style:normal}
+
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--line);padding:52px 0 66px;margin-top:20px}
+.specs{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line-soft)}
+@media(max-width:760px){.specs{grid-template-columns:repeat(2,1fr)}}
+.spec{background:var(--void);padding:18px 16px}
+.spec-k{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--dimmer);text-transform:uppercase}
+.spec-v{font-family:var(--disp);font-weight:600;font-size:15px;margin-top:7px}
+.foot-note{
+  margin-top:30px;font-family:var(--mono);font-size:11.5px;
+  color:var(--dimmer);letter-spacing:.05em;display:flex;
+  justify-content:space-between;flex-wrap:wrap;gap:12px;
+}
+/* author signature — echoes the hero's corner registration marks */
+.sig-wrap{text-align:center;margin-top:46px}
+.sig{
+  position:relative;display:inline-flex;align-items:center;gap:13px;
+  padding:15px 30px;text-decoration:none;
+}
+.sig-k{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.22em;
+  color:var(--dimmer);text-transform:uppercase;
+}
+.sig-v{
+  font-family:var(--mono);font-size:13px;letter-spacing:.05em;
+  color:var(--cyan);font-weight:500;
+}
+.sig .reg{width:10px;height:10px}
+.sig .reg.tl{top:0;left:0}
+.sig .reg.tr{top:0;right:0}
+.sig .reg.bl{bottom:0;left:0}
+.sig .reg.br{bottom:0;right:0}
+@media(max-width:400px){.sig{padding:14px 20px;gap:9px}.sig-k{letter-spacing:.14em}}
+
+@media(prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<div class="osd">
+  <div class="osd-in">
+    <div class="osd-mark">SET<span>1080</span>P</div>
+    <div class="osd-sep"></div>
+    <div class="osd-read hide-sm">DUPLICATE · 1920×1080 · 125%</div>
+    <div class="osd-read">WIN10 1703+</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- ============ HERO ============ -->
+  <div class="hero">
+    <div class="eyebrow">Windows 顯示設定工具 / 單一執行檔</div>
+
+    <div class="screen" id="screen">
+      <span class="reg tl"></span><span class="reg tr"></span>
+      <span class="reg bl"></span><span class="reg br"></span>
+      <div class="readout"><span class="dot" id="dot"></span><span id="read">1280 × 1024 · 100%</span></div>
+      <div class="stamp" id="stamp">已套用</div>
+      <div class="blink" id="blink"></div>
+
+      <div class="hero-copy" id="copy">
+        <h1>它成功的時候，<br>你<em>看不到</em>任何東西。</h1>
+        <p class="sub">開機時把投影模式、螢幕解析度、DPI 縮放一次橋好。沒有視窗、沒有提示、不留檔案。只有失敗才會出聲。</p>
+      </div>
+    </div>
+
+    <div class="actions">
+      <a class="btn" href="Set1080p.exe" download>下載 Set1080p.exe</a>
+      <a class="btn ghost" href="#how">看它做了什麼</a>
+    </div>
+    <button class="replay" id="replay" type="button">↺ 重播解析度切換</button>
+  </div>
+
+  <!-- ============ WHAT IT DOES ============ -->
+  <section id="how">
+    <div class="stag">執行內容</div>
+    <h2>三個動作，一條訊號鏈</h2>
+    <p class="lede">先切拓撲，再設解析度，最後調縮放——順序不能換。投影模式沒切好，後面兩項設了也會被覆蓋掉。</p>
+
+    <div class="chain">
+      <div class="node soft">
+        <div class="node-k">01 / 拓撲</div>
+        <div class="node-v">同步 <small>Duplicate</small></div>
+        <div class="node-d">把筆電畫面與投影機設成同步顯示，兩邊看到一樣的內容。</div>
+        <div class="flag">不列入成敗判斷</div>
+        <div class="node-api">DisplaySwitch.exe /clone</div>
+      </div>
+      <div class="node">
+        <div class="node-k">02 / 解析度</div>
+        <div class="node-v">1920 × 1080</div>
+        <div class="node-d">套用到目前的主要顯示來源。螢幕不支援此模式時會失敗，不會硬設。</div>
+        <div class="flag">納入自檢</div>
+        <div class="node-api">ChangeDisplaySettings</div>
+      </div>
+      <div class="node">
+        <div class="node-k">03 / 縮放</div>
+        <div class="node-v">125 <small>%</small></div>
+        <div class="node-d">Windows 只接受固定的縮放級距，125% 是其中第二階。</div>
+        <div class="ladder">
+          <span class="rung"></span><span class="rung on"></span><span class="rung"></span>
+          <span class="rung"></span><span class="rung"></span><span class="rung"></span>
+          <span class="rung"></span><span class="rung"></span><span class="rung"></span>
+          <span class="rung"></span><span class="rung"></span><span class="rung"></span>
+        </div>
+        <div class="node-api">DisplayConfigSetDeviceInfo</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SELF-CHECK ============ -->
+  <section>
+    <div class="stag">自檢機制</div>
+    <h2>失敗就自己再試一次</h2>
+    <p class="lede">顯示設定失敗常常是時序問題——驅動還沒就緒。與其立刻報錯，不如等一下再試。</p>
+
+    <div class="flow">
+      <div class="step">
+        <div class="step-n">ATTEMPT 1</div>
+        <div class="step-b">
+          <div class="step-t">套用解析度與 DPI</div>
+          <div class="step-d">兩項都成功就直接結束，不寫檔、不跳窗，完全靜默。</div>
+        </div>
+      </div>
+      <div class="step warn">
+        <div class="step-n">WAIT</div>
+        <div class="step-b">
+          <div class="step-t">有項目失敗 → 等 1.5 秒</div>
+          <div class="step-d">給顯示驅動與拓撲切換一點時間穩定下來。</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">ATTEMPT 2</div>
+        <div class="step-b">
+          <div class="step-t">只重試失敗的那一項</div>
+          <div class="step-d">已經成功的項目會略過。解析度第一次就過、只有 DPI 失敗的話，第二次不會再動解析度——避免畫面重複閃爍。</div>
+        </div>
+      </div>
+      <div class="step hit">
+        <div class="step-n">PASS</div>
+        <div class="step-b">
+          <div class="step-t">兩項都成功</div>
+          <div class="step-d">靜默退出。<code>D:\Set1080p_Log\</code> 不會有任何新檔案。</div>
+        </div>
+      </div>
+      <div class="step warn">
+        <div class="step-n">FAIL</div>
+        <div class="step-b">
+          <div class="step-t">重試後仍失敗</div>
+          <div class="step-d">寫入記錄檔，跳出錯誤視窗，並在視窗上直接顯示記錄檔路徑。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ THE LOUD MOMENT ============ -->
+  <section class="loud">
+    <div class="stag">失效行為</div>
+    <h2>它<em>出聲</em>的那一刻</h2>
+    <p class="lede">這是整支程式唯一會被看見的畫面。訊息只列出真正失敗的項目，記錄檔同時寫進磁碟。</p>
+
+    <div class="pair">
+      <div>
+        <div class="cap">錯誤視窗</div>
+        <div class="msgbox">
+          <div class="msgbox-bar"><span>Set1080p</span><span class="msgbox-x">✕</span></div>
+          <div class="msgbox-body">
+            <div class="icon-err">✕</div>
+            <div>
+              <div class="msg-h">螢幕解析度自動調整失敗</div>
+              <div class="msg-l">• DPI 縮放設定為 125% 失敗</div>
+              <div class="msg-n">（已自動重試一次仍未成功。DPI 若無變化，請重新登入後再檢查。）</div>
+              <div class="msg-p">記錄檔已儲存至：<br>D:\Set1080p_Log\Set1080p_20260731_143052.log</div>
+            </div>
+          </div>
+          <div class="msgbox-foot"><span class="okbtn">確定</span></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="cap">記錄檔內容</div>
+        <div class="logbox">
+          <div class="logbox-bar">Set1080p_20260731_143052.log</div>
+<pre><span class="rule">========================================</span>
+ <b>Set1080p 執行記錄</b>
+ 時間：2026-07-31 14:30:52
+ 電腦：DESKTOP-ABC123 / 使用者：Ryan
+<span class="rule">========================================</span>
+
+[前置] 投影模式 -&gt; 同步 (Duplicate)
+       已送出 DisplaySwitch /clone 指令
+
+<b>[第 1 次嘗試]</b>
+  解析度 1920 x 1080 ... <span class="ok">OK</span>
+  DPI 縮放 125%      ... <span class="no">失敗</span>
+
+&gt;&gt; 有項目未成功，1.5 秒後自動重試一次...
+
+<b>[第 2 次嘗試]</b>
+  解析度 1920 x 1080 ... <span class="ok">已成功（略過）</span>
+  DPI 縮放 125%      ... <span class="no">失敗</span>
+
+最終結果：<span class="no">重試後仍有項目失敗</span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LOG LOCATION ============ -->
+  <section>
+    <div class="stag">記錄檔</div>
+    <h2>只有失敗才寫檔</h2>
+    <p class="lede">這支程式是開機靜默執行的。每次都寫檔，磁碟很快會堆滿沒人看的小檔案——所以成功時一個字都不留。</p>
+
+    <table class="tbl">
+      <thead><tr><th>位置</th><th>路徑</th><th>說明</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>主要</td>
+          <td><code>D:\Set1080p_Log\</code></td>
+          <td>資料夾不存在會自動建立。</td>
+        </tr>
+        <tr>
+          <td>備援</td>
+          <td><code>%TEMP%\Set1080p_Log\</code></td>
+          <td>D: 不存在或沒有寫入權限時自動改用，程式不會崩潰。</td>
+        </tr>
+        <tr>
+          <td>檔名</td>
+          <td><code>Set1080p_YYYYMMDD_HHmmss.log</code></td>
+          <td>帶時間戳記，多次失敗不會互相覆蓋。</td>
+        </tr>
+        <tr>
+          <td>編碼</td>
+          <td><code>UTF-8 with BOM</code></td>
+          <td>加 BOM 是為了讓記事本直接開啟時中文不會變亂碼。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ DEPLOY ============ -->
+  <section>
+    <div class="stag">安裝</div>
+    <h2>把它掛上開機</h2>
+
+    <div class="cols">
+      <div>
+        <div class="h3">工作排程器（建議）</div>
+        <ul class="list">
+          <li>開啟<b>工作排程器</b>，建立工作</li>
+          <li><b>觸發程序</b>：登入時，延遲工作 <b>30 秒</b></li>
+          <li><b>動作</b>：啟動程式，指向 <code>Set1080p.exe</code></li>
+          <li><b>條件</b>：取消勾選「只有在電腦使用 AC 電源時才啟動」——筆電必做</li>
+        </ul>
+        <div class="tip"><b>延遲 30 秒是關鍵。</b>開機時顯示驅動與螢幕拓撲需要時間就緒。太早執行，兩次重試會落在同一個「還沒好」的時間窗內，注定都失敗——這個延遲比重試機制本身更能解決問題。</div>
+      </div>
+
+      <div>
+        <div class="h3">自己編譯</div>
+        <p class="lede" style="margin-top:0;font-size:14px">單檔、無外部相依，只用到 <code style="font-family:var(--mono);font-size:12.5px;color:var(--cyan)">mscorlib</code> 與 <code style="font-family:var(--mono);font-size:12.5px;color:var(--cyan)">System</code>。</p>
+        <div class="cmd">csc /target:winexe /platform:anycpu /optimize+ Set1080p.cs</div>
+        <div class="cmd"><i># Linux / macOS，Mono 可交叉編譯</i><br>mcs -target:winexe -optimize+ \<br>&nbsp;&nbsp;&nbsp;&nbsp;-out:Set1080p.exe Set1080p.cs</div>
+        <div class="tip" style="border-color:var(--amber);background:rgba(245,184,67,.05)"><b style="color:var(--amber)">別用 -target:exe。</b>那會多跳一個黑色 console 視窗，靜默執行就破功了。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TROUBLESHOOT ============ -->
+  <section>
+    <div class="stag">疑難排解</div>
+    <h2>失敗時先看這裡</h2>
+
+    <table class="tbl">
+      <thead><tr><th>症狀</th><th>原因</th><th>處理</th></tr></thead>
+      <tbody>
+        <tr><td>沒有產生記錄檔</td><td>這是正常的</td><td>成功時不寫檔。確認顯示設定是否已正確套用即可。</td></tr>
+        <tr><td>解析度兩次都失敗</td><td>螢幕不支援 1080p</td><td>到「顯示設定」確認可用解析度清單，改掉目標值。</td></tr>
+        <tr><td>手動設得動、程式設不動</td><td>時序問題</td><td>把投影切換後的等待從 1500 拉長到 3000 毫秒。</td></tr>
+        <tr><td>DPI 回報成功但畫面沒變</td><td>Windows 限制</td><td>部分情況需登出再登入才會生效。</td></tr>
+        <tr><td>投影模式沒切換</td><td>群組原則封鎖</td><td>受管理的電腦會擋 DisplaySwitch，這不是程式的問題。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="specs">
+      <div class="spec"><div class="spec-k">格式</div><div class="spec-v">PE32 · GUI</div></div>
+      <div class="spec"><div class="spec-k">Runtime</div><div class="spec-v">v4.0.30319</div></div>
+      <div class="spec"><div class="spec-k">最低系統</div><div class="spec-v">Win10 1703</div></div>
+      <div class="spec"><div class="spec-k">權限</div><div class="spec-v">免系統管理員</div></div>
+    </div>
+    <div class="foot-note">
+      <span>SET1080P · 單檔工具 · 無安裝程序</span>
+      <span>DPI 設定使用未公開的 DisplayConfig API</span>
+    </div>
+
+    <div class="sig-wrap">
+      <div class="sig">
+        <span class="reg tl"></span><span class="reg tr"></span>
+        <span class="reg bl"></span><span class="reg br"></span>
+        <span class="sig-k">made with</span>
+        <span class="sig-v">ryanchiu623-wq</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var screen=document.getElementById('screen'),
+      blink=document.getElementById('blink'),
+      read=document.getElementById('read'),
+      dot=document.getElementById('dot'),
+      copy=document.getElementById('copy'),
+      stamp=document.getElementById('stamp'),
+      replay=document.getElementById('replay'),
+      timers=[];
+
+  var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function flash(ms){
+    blink.classList.add('on');
+    timers.push(setTimeout(function(){blink.classList.remove('on');},ms));
+  }
+  function at(ms,fn){timers.push(setTimeout(fn,ms));}
+  function clear(){timers.forEach(clearTimeout);timers=[];}
+
+  function settle(){ // final state, no motion
+    screen.classList.add('wide');
+    copy.classList.add('dpi');
+    dot.classList.add('ok');
+    stamp.classList.add('on');
+    read.textContent='1920 × 1080 · 125%';
+  }
+
+  function run(){
+    clear();
+    if(reduce){settle();return;}
+    // reset to "wrong" state
+    screen.classList.remove('wide');
+    copy.classList.remove('dpi');
+    dot.classList.remove('ok');
+    stamp.classList.remove('on');
+    read.textContent='1280 × 1024 · 100%';
+
+    // step 1 — resolution snaps to 16:9
+    at(700,function(){
+      flash(110);
+      at(60,function(){
+        screen.classList.add('wide');
+        read.textContent='1920 × 1080 · 100%';
+      });
+    });
+    // step 2 — DPI applies, content scales up
+    at(1650,function(){
+      flash(70);
+      at(45,function(){
+        copy.classList.add('dpi');
+        read.textContent='1920 × 1080 · 125%';
+        dot.classList.add('ok');
+      });
+    });
+    at(2250,function(){stamp.classList.add('on');});
+  }
+
+  replay.addEventListener('click',run);
+  if(reduce){settle();replay.style.display='none';}
+  else{at(320,run);}
+
+  // 站內錨點改用 scrollIntoView：沙盒 iframe 預覽會把 #hash 當成跳站，這樣可避開
+  document.querySelectorAll('a[href^="#"]').forEach(function(a){
+    a.addEventListener('click',function(e){
+      var t=document.getElementById(a.getAttribute('href').slice(1));
+      if(!t) return;
+      e.preventDefault();
+      t.scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});
+    });
+  });
+})();
+</script>
+</body>
+</html>
